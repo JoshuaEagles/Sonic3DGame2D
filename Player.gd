@@ -1,8 +1,3 @@
-#some idea stuff:
-#raycast should only be enabled when on the ground, when no longer on the ground disable it
-#use the raycast to look for a slope to snap down to, and make sure the player's rotation is set based on the floor angle
-#the collision shape should only be used for enemies, walls/ceilings, and touching the ground again once in the air, not for the floor movement stuff
-
 extends Node2D
 
 enum states {
@@ -21,42 +16,37 @@ var absolute_up : Vector2 = Vector2(0, -1)
 #the current state of the player, states defined in player_states
 var state_current : int
 
-var circlePos = Vector2(0,0)
 
 #the difference from the players position to cast this ray to use for finding downward slopes
 const raycastGroundForSlopes : Vector2 = Vector2(0, 1)
 
+#how far away to stay from walls and floors after a collision
+const COLLISION_OFFSET : float = 0.1
+
+#how powerful the force of gravity is
+const GRAVITY = 1
+
 #player move speed, temporary, should be replaced with acceleration system later
 const MOVE_SPEED : float = 240.0
 
-func _ready():
+func _ready() -> void:
 	input_move_vector = Vector2(0, 0)
 	velocity = Vector2(0, 0)
 	relative_up = Vector2(0, -1)
 	
 	state_current = states.IN_AIR
 	
-func _process(delta):
+#warning-ignore:unused_argument
+func _process(delta) -> void:
 	get_movement_input()
 	
-func _physics_process(delta):
+func _physics_process(delta) -> void:
 	#access the current state of the world to use for raycasting and such
 	var space_state = get_world_2d().direct_space_state
 	
-	#velocity and movement stuff starts here
-	velocity = MOVE_SPEED * input_move_vector
+	velocity += project_vector2_onto_face(input_move_vector * 10, relative_up)
 	
-	if state_current == states.IN_AIR:
-		velocity.y += 50
-		
-	if state_current == states.ON_GROUND:
-		pass
-		
-	if state_current == states.ON_GROUND:
-		velocity = velocity.rotated(rotation)
-	
-	#collision stuff starts here
-	
+	#movement and collision starts here
 	var raycast_result = space_state.intersect_ray(position, position + (velocity * delta), [self])
 	update()
 	
@@ -64,82 +54,143 @@ func _physics_process(delta):
 		var raycast_collision_normal = raycast_result.normal
 		var raycast_collision_position = raycast_result.position
 		
-		#print(raycast_collision_normal)
-		
 		if state_current == states.IN_AIR:
 			if raycast_collision_normal.y < -0.5:
-				#on floor, transition from air state to ground state
+				#touching a floor at a usable angle, transition from air state to ground state
 				state_current = states.ON_GROUND
-	
-				position = raycast_collision_position
-				position += raycast_collision_normal * 0.1
-				rotation = absolute_up.angle_to(raycast_collision_normal)
-				relative_up = raycast_collision_normal
-				#rotation = atan2(raycast_collision_normal.x, -raycast_collision_normal.y)
 				
-				velocity = Vector2(0,0)
+				get_onto_floor(raycast_collision_position, raycast_collision_normal)
 				
-				circlePos = raycast_collision_position
+				velocity = project_vector2_onto_face(velocity, raycast_collision_normal)
+				
 			else:
-				velocity = Vector2(0,0)
+				#in the air, but not touching a floor that can be moved onto, do wall stuff
+				
+				#calculate how much distance is left to be moved, so you can slide down a slope for example
+				var distanceLeftToMove = (velocity * delta).length()
+				var distanceMoved = (raycast_collision_position - position).length()
+				distanceLeftToMove -= distanceMoved
+				
+				#calculate the new direction for the velocity based on the wall
+				velocity = project_vector2_onto_face(velocity, raycast_collision_normal)
+				#place the player at the collision point and move them away from the wall a little
+				position = raycast_collision_position
+				position += raycast_collision_normal * COLLISION_OFFSET
+				
+				var positionToMove = position + scale_vector2_to_length(velocity, distanceLeftToMove)
+				
+				if distanceLeftToMove > 0:
+					if not space_state.intersect_ray(position, positionToMove, [self]):
+						#no collision occured
+						position = positionToMove
+						
+				velocity.y += GRAVITY
+				
 		elif state_current == states.ON_GROUND:
 			#ground to new slope
+			#to account for moving onto multiple different slopes in one frame, use a while loop (ref Car.cpp line ~140)
 			var dotOfSlopes = relative_up.dot(raycast_collision_normal)
-			if dotOfSlopes > 0.6:
-				#slope isn't super steep, so we can move onto it
-				#print(dotOfSlopes)
-				position = raycast_collision_position
-				position += raycast_collision_normal * 0.1
-				rotation = absolute_up.angle_to(raycast_collision_normal)
-				relative_up = raycast_collision_normal
-				#atan2(raycast_collision_normal.x, -raycast_collision_normal.y)
+			if dotOfSlopes > 0.5:
+				#touching a slope at a usable angle, transition to being on that slope
+				var distanceTraveled = (raycast_collision_position - position).length()
+				var distanceLeftToMove = (velocity.length() * delta) - distanceTraveled
 				
-				velocity = Vector2(0,0)
+				velocity = project_vector2_onto_face(velocity, raycast_collision_normal)
+				
+				get_onto_floor(raycast_collision_position, raycast_collision_normal)
+				
+				var positionToMove = position + (velocity.normalized() * distanceLeftToMove)
+				
+				while (distanceLeftToMove > 0):
+					raycast_result = null
+					raycast_result = space_state.intersect_ray(position, positionToMove)
+					
+					if raycast_result:
+						#there was a collision, handle it
+						dotOfSlopes = relative_up.dot(raycast_collision_normal)
+						if dotOfSlopes > 0.5:
+							#touching a slope at a usable angle, transition to being on that slope
+							distanceTraveled = raycast_collision_position - position
+							distanceLeftToMove = (velocity.length() * delta) - distanceTraveled
+						
+							velocity = project_vector2_onto_face(velocity, raycast_collision_normal)
+						
+							get_onto_floor(raycast_collision_position, raycast_collision_normal)
+						
+							positionToMove = position + (velocity.normalized() * distanceLeftToMove)
+						else:
+							#slope is super steep and therefore is a wall
+							velocity = Vector2(0, 0)
+							distanceLeftToMove = 0
+					else:
+						#no collision, move remaining distance
+						position = positionToMove
+						distanceLeftToMove = 0
 			else:
 				#slope is super steep and therefore is a wall
 				velocity = Vector2(0, 0)
-	elif state_current == states.ON_GROUND:
+	else:
 		#no initial collision, maybe there's a slope going down?
-		#position += velocity * delta
+		position += velocity * delta
 		
-		raycast_result = space_state.intersect_ray(position, position - relative_up * 5, [self])
+		#null out the raycast_result, if you collide later 
+		raycast_result = null
+		
+		if state_current == states.ON_GROUND:
+			raycast_result = space_state.intersect_ray(position, position - relative_up * 5, [self])
+			if raycast_result:
+				var raycast_collision_normal = raycast_result.normal
+				var raycast_collision_position = raycast_result.position
+				
+				var dotOfSlopes = relative_up.dot(raycast_collision_normal)
+				if dotOfSlopes > 0.6:
+					get_onto_floor(raycast_collision_position, raycast_collision_normal)
+					
+					#align the velocity with the new floor
+					velocity = project_vector2_onto_face(velocity, raycast_collision_normal)
+					
+				elif relative_up.angle_to(raycast_collision_normal) > 90:
+					#ignore cliffs, but not walls
+					raycast_result = null
+		
 		if raycast_result:
-			var raycast_collision_normal = raycast_result.normal
-			var raycast_collision_position = raycast_result.position
-			
-			var dotOfSlopes = relative_up.dot(raycast_collision_normal)
-			if dotOfSlopes > 0.6:
-				position = raycast_collision_position
-				position += raycast_collision_normal * 0.1
-				rotation = absolute_up.angle_to(raycast_collision_normal)
-				relative_up = raycast_collision_normal
-			elif relative_up.angle_to(raycast_collision_normal) > 90:
-				state_current = states.IN_AIR
-				rotation = 0
-				relative_up = absolute_up
+			#colliding with a wall
+			velocity = Vector2(0, 0)
 		else:
+			#not colliding with anything, go into air state
 			state_current = states.IN_AIR
 			rotation = 0
 			relative_up = absolute_up
 			
-			
-#			#rotation = atan2(raycast_collision_normal.x, -raycast_collision_normal.y)
-#		
-#			velocity = Vector2(0,0)
-	
-	#apply the players movement
-	position += velocity * delta	
+			velocity.y += GRAVITY
 
-func _draw():
+func _draw() -> void:
 	var inverse_transform = get_transform().inverse()
 	
 	draw_set_transform(inverse_transform.get_origin(), inverse_transform.get_rotation(), inverse_transform.get_scale())
 	#draw_line(Vector2(0,0) + Vector2(0, -1), (velocity * 0.0167) + Vector2(0, -1), Color(1,0,0,1))
 	#draw_line(Vector2(0,0), Vector2(0,0) - relative_up * 6, Color(1,0,0))
 	
-#	draw_circle(circlePos - position, 5, Color(1,0,0))
 	pass
 	
-func get_movement_input():
+func get_movement_input() -> void:
 	input_move_vector.x = int(Input.is_action_pressed("move_right")) - int(Input.is_action_pressed("move_left"))
 	input_move_vector.y = int(Input.is_action_pressed("move_down")) - int(Input.is_action_pressed("move_up"))
+	
+#This function is used to aligh with floors and walls and such, since you only have a normal to work with for those faces
+func project_vector2_onto_face(toProject : Vector2, projectOntoNormal : Vector2) -> Vector2:
+	return toProject.project(projectOntoNormal.tangent())
+	
+func scale_vector2_to_length(vector2ToSet : Vector2, newLength : float) -> Vector2:
+	var newVector : Vector2 = Vector2()
+	if vector2ToSet.length() > 0:
+		var ratio = newLength / vector2ToSet.length()
+		newVector.x = vector2ToSet.x * ratio
+		newVector.y = vector2ToSet.y * ratio
+	return newVector
+	
+func get_onto_floor(raycast_collision_position : Vector2, raycast_collision_normal : Vector2) -> void:
+	position = raycast_collision_position
+	position += raycast_collision_normal * COLLISION_OFFSET
+	rotation = absolute_up.angle_to(raycast_collision_normal)
+	relative_up = raycast_collision_normal
