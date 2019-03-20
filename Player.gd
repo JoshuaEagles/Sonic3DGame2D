@@ -112,7 +112,7 @@ func _physics_process(delta) -> void:
 						if dotOfSlopes > 0.5:
 							#touching a slope at a usable angle, transition to being on that slope
 							distanceTraveled = (raycast_collision_position - position).length()
-							distanceLeftToMove = (velocity.length() * delta) - distanceTraveled
+							distanceLeftToMove -= distanceTraveled
 						
 							velocity = calculate_velocity_new_floor(velocity, raycast_collision_normal)
 						
@@ -153,10 +153,11 @@ func _physics_process(delta) -> void:
 				elif relative_up.angle_to(raycast_collision_normal) > 90:
 					#ignore cliffs, but not walls
 					raycast_result = null
-		
+				
 		if raycast_result:
 			#colliding with a wall
-			velocity = Vector2(0, 0)
+			#velocity = Vector2(0, 0)
+			pass
 		else:
 			#not colliding with anything, go into air state
 			state_current = states.IN_AIR
@@ -200,14 +201,23 @@ func calculate_velocity_new_floor(velocityOld : Vector2, raycast_collision_norma
 	return scale_vector2_to_length(newDirection, velocityOld.length())
 	
 #port of a function from SAB2, applys drag using Eulers number
-func applyDrag(velocityCurrent : Vector2, drag : float, delta : float) -> Vector2:
+func apply_drag(velocityCurrent : Vector2, drag : float, delta : float) -> Vector2:
 	if velocityCurrent.length() > 0:
-		var newLength = velocityCurrent.length() * pow(2.718281828459, drag * delta)
+		var newLength : float = velocityCurrent.length() * pow(2.718281828459, drag * delta)
+		print(newLength)
 		return velocity * (newLength / velocityCurrent.length())
-	return Vector2(0, 0)
+	return velocityCurrent
 	
 func calculate_next_velocity_ground(delta : float) -> void:
-	pass
-	
+	if input_move_vector.length() > 0:
+		velocity += (input_move_vector * 100 * delta).rotated(rotation)
+		
+		velocity = apply_drag(velocity, -0.5, delta)
+		
+		if input_move_vector.angle_to(velocity) >= 90:
+			velocity = apply_drag(velocity, -5, delta)
+			
+	else:
+		velocity = apply_drag(velocity, -5.5, delta)
 func calculate_next_velocity_air(delta : float) -> void:
 	pass
