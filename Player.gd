@@ -48,6 +48,14 @@ func _physics_process(delta) -> void:
 		calculate_next_velocity_ground(delta)
 	#velocity += (input_move_vector * 100).rotated(rotation)
 	
+	#move sonic based on the slope he is on.
+	if state_current == states.ON_GROUND:
+		if relative_up.y > -1:
+			var slope_power = 150 #/ (velocity.length() + 1)
+			var slope_velocity = Vector2(0, slope_power * delta)
+			slope_velocity = project_vector2_onto_face(slope_velocity, relative_up)
+			velocity += slope_velocity
+	
 	#movement and collision starts here
 	var raycast_result = space_state.intersect_ray(position, position + (velocity * delta), [self])
 	update()
@@ -63,7 +71,7 @@ func _physics_process(delta) -> void:
 				
 				get_onto_floor(raycast_collision_position, raycast_collision_normal)
 				
-				velocity = calculate_velocity_new_floor(velocity, raycast_collision_normal)
+				velocity = velocity.project(relative_up)
 				
 			else:
 				#in the air, but not touching a floor that can be moved onto, do wall stuff
@@ -138,7 +146,7 @@ func _physics_process(delta) -> void:
 		raycast_result = null
 		
 		if state_current == states.ON_GROUND:
-			raycast_result = space_state.intersect_ray(position, position - relative_up * 5, [self])
+			raycast_result = space_state.intersect_ray(position, position - relative_up * 10, [self])
 			if raycast_result:
 				var raycast_collision_normal = raycast_result.normal
 				var raycast_collision_position = raycast_result.position
@@ -204,7 +212,6 @@ func calculate_velocity_new_floor(velocityOld : Vector2, raycast_collision_norma
 func apply_drag(velocityCurrent : Vector2, drag : float, delta : float) -> Vector2:
 	if velocityCurrent.length() > 0:
 		var newLength : float = velocityCurrent.length() * pow(2.718281828459, drag * delta)
-		print(newLength)
 		return velocity * (newLength / velocityCurrent.length())
 	return velocityCurrent
 	
@@ -219,5 +226,6 @@ func calculate_next_velocity_ground(delta : float) -> void:
 			
 	else:
 		velocity = apply_drag(velocity, -5.5, delta)
+		
 func calculate_next_velocity_air(delta : float) -> void:
 	pass
